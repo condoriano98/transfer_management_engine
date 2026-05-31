@@ -1,12 +1,12 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
-import { requireSupabaseEnv } from "@/lib/env";
+import { supabaseEnv, requireServiceRoleKey } from "@/lib/env";
 
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
 export async function supabaseServer() {
-  const { url, anonKey } = requireSupabaseEnv();
+  const { url, anonKey } = supabaseEnv();
   const cookieStore = await cookies();
   return createServerClient(url, anonKey, {
     cookies: {
@@ -26,8 +26,8 @@ export async function supabaseServer() {
 
 /** Service-role client. Bypasses RLS — use only in webhooks/Inngest. */
 export function supabaseAdmin() {
-  const { url, serviceKey } = requireSupabaseEnv({ includeServiceKey: true });
-  return createClient(url, serviceKey!, {
+  const { url } = supabaseEnv();
+  return createClient(url, requireServiceRoleKey(), {
     auth: { persistSession: false },
   });
 }
