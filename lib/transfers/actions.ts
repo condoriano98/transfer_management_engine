@@ -7,6 +7,7 @@ import { requireRole, requireUser } from "@/lib/auth/rbac";
 import { getApprovalRule } from "@/lib/approvals/rules";
 import { nextStatus } from "@/lib/transfers/state";
 import { postJournal } from "@/lib/ledger/post";
+import { inngest } from "@/inngest/client";
 
 const CreateTransferInput = z.object({
   org_id: z.string().uuid(),
@@ -96,7 +97,20 @@ export async function decideApproval(
 
   if (count !== null && count >= requiredCount) {
     const newStatus = nextStatus(req.status, { type: decision });
-    await sb.from("transfer_requests").update({ status: newStatus }).eq("id", req.id);
+    await sb
+      .from("transfer_requests")
+      .update({ status: newStatus, approved_at: new Date().toISOString() })
+      .eq("id", req.id);
+
+    await inngest.send({
+      name: "transfer.approved",
+      data: {
+        request_id: req.id,
+        org_id: req.org_id,
+        idempotency_key: `transfer_approved:${req.id}`,
+      },
+    });
+
     revalidatePath("/approvals");
     revalidatePath(`/transfers/${req.id}`);
     return { status: newStatus };
@@ -126,6 +140,11 @@ export async function settleTransfer(opts: {
   if (error) throw error;
 
   await requireRole(req.org_id, "finance");
+
+  if (req.status === "settled" || req.status === "rejected"
+      || req.status === "cancelled" || req.status === "failed") {
+    return { already_settled: true, status: req.status };
+  }
 
   const { data: fromAcc } = await sb
     .from("accounts").select("code").eq("id", req.from_account_id).single();

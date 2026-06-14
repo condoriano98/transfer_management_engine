@@ -1,23 +1,11 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/db/supabase-server";
 import { decideApproval } from "@/lib/transfers/actions";
-import { inngest } from "@/inngest/client";
 
 async function approve(formData: FormData) {
   "use server";
   const id = String(formData.get("id"));
-  const result = await decideApproval(id, "approve");
-  if (result.status === "approved") {
-    const sb = await supabaseServer();
-    const { data: r } = await sb
-      .from("transfer_requests").select("org_id").eq("id", id).single();
-    if (r) {
-      await inngest.send({
-        name: "transfer.approved",
-        data: { request_id: id, org_id: r.org_id },
-      });
-    }
-  }
+  await decideApproval(id, "approve");
   revalidatePath("/approvals");
 }
 

@@ -7,9 +7,9 @@ export const inngest = new Inngest({
 
 export type Events = {
   "transfer.requested": {
-    data: { request_id: string; org_id: string };
+    data: { request_id: string; org_id: string; idempotency_key: string };
   };
   "transfer.approved": {
-    data: { request_id: string; org_id: string };
+    data: { request_id: string; org_id: string; idempotency_key: string };
   };
 };
