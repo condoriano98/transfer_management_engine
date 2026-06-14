@@ -132,10 +132,11 @@ export async function settleTransfer(opts: {
   });
   if (tErr) throw tErr;
 
-  const newStatus = nextStatus(
-    nextStatus(req.status === "approved" ? "approved" : req.status, { type: "execute" }),
-    { type: "settle" },
-  );
+  let current = req.status;
+  if (current !== "executing") {
+    current = nextStatus(current, { type: "execute" });
+  }
+  const newStatus = nextStatus(current, { type: "settle" });
   await sb.from("transfer_requests").update({ status: newStatus }).eq("id", req.id);
 
   revalidatePath("/dashboard");
