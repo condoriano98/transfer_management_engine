@@ -32,6 +32,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "request not found" }, { status: 404 });
   }
 
+  if (reqRow.status === "settled" || reqRow.status === "failed") {
+    return NextResponse.json({ ok: true, already_processed: true });
+  }
+
   if (body.status === "COMPLETED") {
     const { data: fromAcc } = await sb
       .from("accounts").select("code").eq("id", reqRow.from_account_id).single();

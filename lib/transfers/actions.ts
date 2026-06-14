@@ -4,7 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/db/supabase-server";
 import { requireRole, requireUser } from "@/lib/auth/rbac";
-import { requiredApproverRole } from "@/lib/approvals/rules";
+import { getApprovalRule } from "@/lib/approvals/rules";
 import { nextStatus } from "@/lib/transfers/state";
 import { postJournal } from "@/lib/ledger/post";
 
@@ -47,20 +47,22 @@ export async function decideApproval(
 
   const { data: req, error: reqErr } = await sb
     .from("transfer_requests")
-    .select("id,org_id,to_account_id,amount,status")
+    .select("id,org_id,to_account_id,amount,status,requested_by")
     .eq("id", requestId)
     .single();
   if (reqErr) throw reqErr;
 
-  const requiredRole = await requiredApproverRole(
+  if (req.requested_by === user.id) {
+    throw new Error("FORBIDDEN: cannot approve your own transfer request");
+  }
+
+  const rule = await getApprovalRule(
     sb,
     req.org_id,
     req.to_account_id,
     req.amount,
   );
-  if (requiredRole) await requireRole(req.org_id, requiredRole);
-
-  const newStatus = nextStatus(req.status, { type: decision });
+  if (rule) await requireRole(req.org_id, rule.approver_role);
 
   // Record approval
   const { error: insErr } = await sb.from("approvals").insert({
@@ -73,15 +75,36 @@ export async function decideApproval(
   });
   if (insErr) throw insErr;
 
-  const { error: updErr } = await sb
-    .from("transfer_requests")
-    .update({ status: newStatus })
-    .eq("id", req.id);
-  if (updErr) throw updErr;
+  // For rejections, transition immediately regardless of approval count.
+  if (decision === "reject") {
+    const newStatus = nextStatus(req.status, { type: decision });
+    await sb.from("transfer_requests").update({ status: newStatus }).eq("id", req.id);
+    revalidatePath("/approvals");
+    revalidatePath(`/transfers/${req.id}`);
+    return { status: newStatus };
+  }
+
+  // Tiered approval: only transition to approved when enough approvers have
+  // signed off. The unique index on (request_id, approver_id) prevents
+  // double-approval.
+  const { count } = await sb
+    .from("approvals")
+    .select("*", { count: "exact", head: true })
+    .eq("request_id", req.id)
+    .eq("decision", "approve");
+  const requiredCount = rule?.required_approver_count ?? 1;
+
+  if (count !== null && count >= requiredCount) {
+    const newStatus = nextStatus(req.status, { type: decision });
+    await sb.from("transfer_requests").update({ status: newStatus }).eq("id", req.id);
+    revalidatePath("/approvals");
+    revalidatePath(`/transfers/${req.id}`);
+    return { status: newStatus };
+  }
 
   revalidatePath("/approvals");
   revalidatePath(`/transfers/${req.id}`);
-  return { status: newStatus };
+  return { status: req.status };
 }
 
 /**

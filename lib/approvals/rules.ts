@@ -6,7 +6,31 @@ export type ApprovalRule = {
   to_account_id: string | null;
   threshold: number;
   approver_role: Role;
+  required_approver_count: number;
 };
+
+type ApprovalRuleRow = {
+  id: string;
+  to_account_id: string | null;
+  threshold: number;
+  approver_role: Role;
+  required_approver_count: number;
+};
+
+async function loadRules(
+  sb: SupabaseClient,
+  orgId: string,
+  amount: number,
+): Promise<ApprovalRuleRow[]> {
+  const { data, error } = await sb
+    .from("approval_rules")
+    .select("id,to_account_id,threshold,approver_role,required_approver_count")
+    .eq("org_id", orgId)
+    .lte("threshold", amount)
+    .order("threshold", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as ApprovalRuleRow[];
+}
 
 /**
  * Find the strictest rule that applies to this request:
@@ -19,17 +43,26 @@ export async function requiredApproverRole(
   toAccountId: string,
   amount: number,
 ): Promise<Role | null> {
-  const { data, error } = await sb
-    .from("approval_rules")
-    .select("id,to_account_id,threshold,approver_role")
-    .eq("org_id", orgId)
-    .lte("threshold", amount)
-    .order("threshold", { ascending: false });
-  if (error) throw error;
-
-  const rules = (data ?? []) as ApprovalRule[];
+  const rules = await loadRules(sb, orgId, amount);
   const match =
     rules.find((r) => r.to_account_id === toAccountId) ??
     rules.find((r) => r.to_account_id === null);
   return match?.approver_role ?? null;
+}
+
+/**
+ * Returns the full matching approval rule (including required_approver_count)
+ * so callers can enforce tiered / multi-approver thresholds.
+ */
+export async function getApprovalRule(
+  sb: SupabaseClient,
+  orgId: string,
+  toAccountId: string,
+  amount: number,
+): Promise<ApprovalRule | null> {
+  const rules = await loadRules(sb, orgId, amount);
+  const match =
+    rules.find((r) => r.to_account_id === toAccountId) ??
+    rules.find((r) => r.to_account_id === null);
+  return match ?? null;
 }

@@ -1,10 +1,18 @@
 import { inngest } from "@/inngest/client";
 import { supabaseAdmin } from "@/lib/db/supabase-server";
-import { xenditFromEnv } from "@/lib/adapters/xendit";
 
 /**
- * On `transfer.approved`, call the provider (Xendit) and record a `transfers`
- * row in pending state. The Xendit webhook later settles it.
+ * On `transfer.approved`, record the allocation and transition to "executing".
+ *
+ * "executing" means the transfer has been approved and the funds are allocated
+ * for tracking. No external payment gateway call happens here — settlement is
+ * handled separately via:
+ *   - Manual settle: admin/finance calls settleTransfer() server action
+ *   - Automated: ad-platform sync workers reconcile actual spend and post
+ *     settlement journals (planned Phase 8)
+ *
+ * If a payment gateway is configured (XENDIT_API_KEY), it runs as an optional
+ * adapter. Without one, the transfer is tracked as an internal allocation.
  */
 export const transferExecute = inngest.createFunction(
   { id: "transfer.execute", retries: 3 },
@@ -23,22 +31,31 @@ export const transferExecute = inngest.createFunction(
       return data;
     });
 
-    const provider = await step.run("call-provider", async () => {
-      const client = xenditFromEnv();
-      return client.createDisbursement({
-        external_id: req.id,
-        amount: req.amount,
-        currency: req.currency,
-        description: req.purpose ?? `Transfer ${req.id}`,
-      });
-    });
+    let provider = "internal";
+    let providerRef: string | null = null;
 
-    await step.run("record-transfer", async () => {
+    const xenditKey = process.env.XENDIT_API_KEY;
+    if (xenditKey) {
+      const result = await step.run("call-provider", async () => {
+        const { xenditFromEnv } = await import("@/lib/adapters/xendit");
+        const client = xenditFromEnv();
+        return client.createDisbursement({
+          external_id: req.id,
+          amount: req.amount,
+          currency: req.currency,
+          description: req.purpose ?? `Transfer ${req.id}`,
+        });
+      });
+      provider = "xendit";
+      providerRef = result.id;
+    }
+
+    await step.run("record-allocation", async () => {
       await sb.from("transfers").insert({
         request_id: req.id,
         org_id,
-        provider: "xendit",
-        provider_ref: provider.id,
+        provider,
+        provider_ref: providerRef,
         status: "pending",
         executed_at: new Date().toISOString(),
       });
@@ -48,6 +65,6 @@ export const transferExecute = inngest.createFunction(
         .eq("id", req.id);
     });
 
-    return { provider_ref: provider.id };
+    return { provider, provider_ref: providerRef };
   },
 );
