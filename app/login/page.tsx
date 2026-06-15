@@ -86,7 +86,14 @@ export default function LoginPage() {
     <main className="mx-auto mt-24 max-w-sm px-6">
       <h1 className="text-2xl font-semibold">Sign in</h1>
 
-      <form action={handleSubmit} className="mt-6 grid gap-3 text-sm">
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const formData = new FormData(e.currentTarget);
+          await handleSubmit(formData);
+        }}
+        className="mt-6 grid gap-3 text-sm"
+      >
         <input
           name="email"
           type="email"
