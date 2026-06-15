@@ -33,29 +33,36 @@ export default function LoginPage() {
     }
 
     startTransition(async () => {
-      const sb = supabaseBrowser();
+      try {
+        const sb = supabaseBrowser();
 
-      if (action === "signup") {
-        const { error } = await sb.auth.signUp({ email, password });
-        if (error) {
-          setState({ error: error.message, confirmationSent: null });
+        if (action === "signup") {
+          const { error } = await sb.auth.signUp({ email, password });
+          if (error) {
+            setState({ error: error.message, confirmationSent: null });
+          } else {
+            setState({ error: null, confirmationSent: email });
+          }
         } else {
-          setState({ error: null, confirmationSent: email });
+          const { error } = await sb.auth.signInWithPassword({ email, password });
+          if (error) {
+            setState({
+              error:
+                error.message === "Invalid login credentials"
+                  ? "Invalid email or password."
+                  : error.message,
+              confirmationSent: null,
+            });
+          } else {
+            router.push("/dashboard");
+            router.refresh();
+          }
         }
-      } else {
-        const { error } = await sb.auth.signInWithPassword({ email, password });
-        if (error) {
-          setState({
-            error:
-              error.message === "Invalid login credentials"
-                ? "Invalid email or password."
-                : error.message,
-            confirmationSent: null,
-          });
-        } else {
-          router.push("/dashboard");
-          router.refresh();
-        }
+      } catch (err) {
+        setState({
+          error: "Network error. Please check your connection and try again.",
+          confirmationSent: null,
+        });
       }
     });
   }
@@ -90,6 +97,9 @@ export default function LoginPage() {
         onSubmit={async (e) => {
           e.preventDefault();
           const formData = new FormData(e.currentTarget);
+          const submitter = (e.nativeEvent as SubmitEvent)
+            .submitter as HTMLButtonElement | null;
+          formData.set("action", submitter?.value ?? "signin");
           await handleSubmit(formData);
         }}
         className="mt-6 grid gap-3 text-sm"
