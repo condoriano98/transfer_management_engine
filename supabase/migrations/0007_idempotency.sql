@@ -33,4 +33,4 @@ create table if not exists event_deliveries (
 
 -- Auto-clean old delivery records so the table doesn't grow unbounded.
 create index if not exists event_deliveries_expires_idx
-  on event_deliveries (expires_at) where expires_at < now();
+  on event_deliveries (expires_at);

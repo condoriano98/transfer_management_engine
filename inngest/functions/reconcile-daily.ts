@@ -125,24 +125,29 @@ export const reconcileDaily = inngest.createFunction(
         const amount = line.credit > 0 ? line.credit : line.debit;
         if (amount === 0) continue;
 
-        await sb
+        const dedupKey = `${line.statement_date}_${line.line_no}`;
+        const { data: existing } = await sb
           .from("exception_queue")
-          .upsert(
-            {
-              org_id: "00000000-0000-0000-0000-000000000000",
-              event_type: "unmatched_statement",
-              payload: {
-                statement_date: line.statement_date,
-                line_no: line.line_no,
-                reference_code: line.reference_code,
-                amount,
-                description: line.description,
-              } as Record<string, unknown>,
-              status: "pending",
-            },
-            { onConflict: "event_type,org_id,COALESCE(payload->>'request_id','')" },
-          )
-          .select("id");
+          .select("id")
+          .eq("event_type", "unmatched_statement")
+          .eq("org_id", "00000000-0000-0000-0000-000000000000")
+          .eq("payload->>reference_code", line.reference_code ?? dedupKey)
+          .maybeSingle();
+
+        if (!existing) {
+          await sb.from("exception_queue").insert({
+            org_id: "00000000-0000-0000-0000-000000000000",
+            event_type: "unmatched_statement",
+            payload: {
+              statement_date: line.statement_date,
+              line_no: line.line_no,
+              reference_code: line.reference_code,
+              amount,
+              description: line.description,
+            } as Record<string, unknown>,
+            status: "pending",
+          });
+        }
       }
 
       return { enqueued: unmatched.length };

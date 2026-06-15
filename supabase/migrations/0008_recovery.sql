@@ -19,9 +19,11 @@ create table if not exists exception_queue (
   retry_count int not null default 0,
   last_error  text,
   created_at  timestamptz not null default now(),
-  resolved_at timestamptz,
-  unique (event_type, org_id, (payload->>'request_id'))
+  resolved_at timestamptz
 );
+
+create unique index if not exists exception_queue_unique_idx
+  on exception_queue (event_type, org_id, (payload->>'request_id'));
 
 create index exception_queue_status_idx
   on exception_queue (status, created_at asc)

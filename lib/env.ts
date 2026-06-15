@@ -7,9 +7,9 @@
 //
 // SUPABASE_SERVICE_ROLE_KEY bypasses RLS and is NEVER hardcoded — it's only
 // required for webhook + Inngest routes, and must come from env.
-const DEFAULT_URL = "https://awsskfxtrhtrmrwlnasv.supabase.co";
+const DEFAULT_URL = "https://zinvrjjxnkgpaglammge.supabase.co";
 const DEFAULT_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF3c3NrZnh0cmh0cm1yd2xuYXN2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyNjA5ODksImV4cCI6MjA5NDgzNjk4OX0.f324Vb6T_aFPxghO0bHJdmBKYkUWWVhphIgu75f3bQs";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InppbnZyamp4bmtncGFnbGFtbWdlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0OTEyNzcsImV4cCI6MjA5NzA2NzI3N30.f5nz9l77v3ffMs4H8rg1P8GfZ_0zhH4M31RlyTmDrKM";
 
 export function supabaseEnv(): { url: string; anonKey: string } {
   return {

@@ -150,25 +150,30 @@ export const recoverOrphaned = inngest.createFunction(
       }
 
       if (!resolved) {
-        await sb
+        const { data: existing } = await sb
           .from("exception_queue")
-          .upsert(
-            {
-              org_id: tr.org_id,
-              event_type: "orphaned_transfer",
-              payload: {
-                request_id: tr.id,
-                transfer_id: transferRow.id,
-                provider: transferRow.provider,
-                provider_ref: transferRow.provider_ref,
-                amount: tr.amount,
-                currency: tr.currency,
-                approved_at: tr.approved_at,
-              } as Record<string, unknown>,
-              status: "pending",
-            },
-            { onConflict: "event_type,org_id,COALESCE(payload->>'request_id','')" },
-          );
+          .select("id")
+          .eq("event_type", "orphaned_transfer")
+          .eq("org_id", tr.org_id)
+          .eq("payload->>request_id", tr.id)
+          .maybeSingle();
+
+        if (!existing) {
+          await sb.from("exception_queue").insert({
+            org_id: tr.org_id,
+            event_type: "orphaned_transfer",
+            payload: {
+              request_id: tr.id,
+              transfer_id: transferRow.id,
+              provider: transferRow.provider,
+              provider_ref: transferRow.provider_ref,
+              amount: tr.amount,
+              currency: tr.currency,
+              approved_at: tr.approved_at,
+            } as Record<string, unknown>,
+            status: "pending",
+          });
+        }
         enqueued++;
       }
     }
