@@ -5,8 +5,6 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/db/supabase-server";
 import { requireRole, requireUser } from "@/lib/auth/rbac";
 import { getApprovalRule } from "@/lib/approvals/rules";
-import { nextStatus } from "@/lib/transfers/state";
-import { postJournal } from "@/lib/ledger/post";
 import { inngest } from "@/inngest/client";
 
 const CreateTransferInput = z.object({
@@ -33,8 +31,16 @@ export async function createTransferRequest(
     .single();
   if (error) throw error;
 
+  await inngest.send({
+    name: "transfer.requested",
+    data: {
+      request_id: row.id,
+      org_id: data.org_id,
+      idempotency_key: `transfer_requested:${row.id}`,
+    },
+  });
+
   revalidatePath("/transfers");
-  revalidatePath("/approvals");
   return row;
 }
 
@@ -53,10 +59,6 @@ export async function decideApproval(
     .single();
   if (reqErr) throw reqErr;
 
-  if (req.requested_by === user.id) {
-    throw new Error("FORBIDDEN: cannot approve your own transfer request");
-  }
-
   const rule = await getApprovalRule(
     sb,
     req.org_id,
@@ -65,66 +67,35 @@ export async function decideApproval(
   );
   if (rule) await requireRole(req.org_id, rule.approver_role);
 
-  // Record approval
-  const { error: insErr } = await sb.from("approvals").insert({
-    request_id: req.id,
-    org_id: req.org_id,
-    approver_id: user.id,
-    decision,
-    notes: notes ?? null,
-    channel: "in_app",
-  });
-  if (insErr) throw insErr;
-
-  // For rejections, transition immediately regardless of approval count.
-  if (decision === "reject") {
-    const newStatus = nextStatus(req.status, { type: decision });
-    await sb.from("transfer_requests").update({ status: newStatus }).eq("id", req.id);
-    revalidatePath("/approvals");
-    revalidatePath(`/transfers/${req.id}`);
-    return { status: newStatus };
-  }
-
-  // Tiered approval: only transition to approved when enough approvers have
-  // signed off. The unique index on (request_id, approver_id) prevents
-  // double-approval.
-  const { count } = await sb
-    .from("approvals")
-    .select("*", { count: "exact", head: true })
-    .eq("request_id", req.id)
-    .eq("decision", "approve");
   const requiredCount = rule?.required_approver_count ?? 1;
 
-  if (count !== null && count >= requiredCount) {
-    const newStatus = nextStatus(req.status, { type: decision });
-    await sb
-      .from("transfer_requests")
-      .update({ status: newStatus, approved_at: new Date().toISOString() })
-      .eq("id", req.id);
+  const { data, error } = await sb.rpc("decide_approval_atomic", {
+    p_request_id: requestId,
+    p_approver_id: user.id,
+    p_decision: decision,
+    p_notes: notes ?? null,
+    p_required_count: requiredCount,
+  });
+  if (error) throw error;
 
+  const result = data as { status: string; transitioned: boolean };
+
+  if (result.transitioned && result.status === "approved") {
     await inngest.send({
       name: "transfer.approved",
       data: {
-        request_id: req.id,
+        request_id: requestId,
         org_id: req.org_id,
-        idempotency_key: `transfer_approved:${req.id}`,
+        idempotency_key: `transfer_approved:${requestId}`,
       },
     });
-
-    revalidatePath("/approvals");
-    revalidatePath(`/transfers/${req.id}`);
-    return { status: newStatus };
   }
 
   revalidatePath("/approvals");
-  revalidatePath(`/transfers/${req.id}`);
-  return { status: req.status };
+  revalidatePath(`/transfers/${requestId}`);
+  return { status: result.status };
 }
 
-/**
- * Manual settle path — used by webhook or by an admin marking a transfer
- * settled. Posts the ledger journal and flips status.
- */
 export async function settleTransfer(opts: {
   request_id: string;
   provider: string;
@@ -134,54 +105,28 @@ export async function settleTransfer(opts: {
 
   const { data: req, error } = await sb
     .from("transfer_requests")
-    .select("id,org_id,from_account_id,to_account_id,amount,currency,status")
+    .select("id,org_id,status")
     .eq("id", opts.request_id)
     .single();
   if (error) throw error;
 
   await requireRole(req.org_id, "finance");
 
-  if (req.status === "settled" || req.status === "rejected"
-      || req.status === "cancelled" || req.status === "failed") {
-    return { already_settled: true, status: req.status };
-  }
-
-  const { data: fromAcc } = await sb
-    .from("accounts").select("code").eq("id", req.from_account_id).single();
-  const { data: toAcc } = await sb
-    .from("accounts").select("code").eq("id", req.to_account_id).single();
-  if (!fromAcc || !toAcc) throw new Error("account not found");
-
-  const journalId = await postJournal(sb, {
-    org_id: req.org_id,
-    memo: `transfer ${req.id}`,
-    ref: `transfer:${req.id}`,
-    lines: [
-      { account_code: toAcc.code,   direction: "debit",  amount: req.amount, currency: req.currency },
-      { account_code: fromAcc.code, direction: "credit", amount: req.amount, currency: req.currency },
-    ],
+  const { data, error: rpcErr } = await sb.rpc("settle_transfer_atomic", {
+    p_request_id: opts.request_id,
+    p_provider: opts.provider,
+    p_provider_ref: opts.provider_ref,
   });
+  if (rpcErr) throw rpcErr;
 
-  const { error: tErr } = await sb.from("transfers").insert({
-    request_id: req.id,
-    org_id: req.org_id,
-    provider: opts.provider,
-    provider_ref: opts.provider_ref,
-    status: "success",
-    journal_id: journalId,
-    executed_at: new Date().toISOString(),
-    settled_at: new Date().toISOString(),
-  });
-  if (tErr) throw tErr;
-
-  let current = req.status;
-  if (current !== "executing") {
-    current = nextStatus(current, { type: "execute" });
-  }
-  const newStatus = nextStatus(current, { type: "settle" });
-  await sb.from("transfer_requests").update({ status: newStatus }).eq("id", req.id);
+  const result = data as { journal_id?: string; status?: string; already_settled?: boolean };
 
   revalidatePath("/dashboard");
-  revalidatePath(`/transfers/${req.id}`);
-  return { journal_id: journalId };
+  revalidatePath(`/transfers/${opts.request_id}`);
+
+  if (result.already_settled) {
+    return { already_settled: true, status: result.status };
+  }
+
+  return { journal_id: result.journal_id };
 }

@@ -34,7 +34,9 @@ export default async function AppLayout({
           <Link href="/transfers" className="rounded px-2 py-1.5 hover:bg-muted">Transfers</Link>
           <Link href="/approvals" className="rounded px-2 py-1.5 hover:bg-muted">Approvals</Link>
           <Link href="/ledger"    className="rounded px-2 py-1.5 hover:bg-muted">Ledger</Link>
+          <Link href="/analytics" className="rounded px-2 py-1.5 hover:bg-muted">Analytics</Link>
           <Link href="/export"    className="rounded px-2 py-1.5 hover:bg-muted">Export</Link>
+          <Link href="/audit"     className="rounded px-2 py-1.5 hover:bg-muted">Audit Log</Link>
           <Link href="/settings"  className="rounded px-2 py-1.5 hover:bg-muted">Settings</Link>
         </nav>
         <div className="text-xs text-muted-foreground">
